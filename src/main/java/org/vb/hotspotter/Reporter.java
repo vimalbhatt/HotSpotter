@@ -33,12 +33,12 @@ import java.util.TreeMap;
 import static java.util.Objects.nonNull;
 
 public class Reporter {
-    public static final int MAX_COMMITS_COUNT = 20000;
+    public int maxCommitsCount = 20000;
     private String repositoryPath;
     private String sourcePath;
     private String reportFileName;
-    private static final int MIN_COMMIT_COUNT_TO_BE_REPORTED = 2;
-    private static final int IGNORE_COMMITS_OLDER_THAN_DAYS = 730;
+    private int minCommitCountToBeReported = 2;
+    private int ignoreCommitsOlderThanDays = 730;
     private String[] exclusionsPathContains;
     private String[] exclusionsCommentsStartsWith;
     private String[] exclusionsFileExtensions;
@@ -55,7 +55,18 @@ public class Reporter {
         this.repositoryPath = properties.getProperty("repository.path");
         this.sourcePath = properties.getProperty("source.path");
         this.reportFileName = properties.getProperty("report.file");
+        
         String property = null;
+        
+        property = properties.getProperty("min.commit.count.to.report");
+        if (nonNull(property))this.minCommitCountToBeReported=Integer.parseInt(property);
+        
+        property = properties.getProperty("max.commit.count.for.analysis");
+        if (nonNull(property))this.maxCommitsCount=Integer.parseInt(property);
+
+        property = properties.getProperty("ignore.commit.older.than.days");
+        if (nonNull(property))this.ignoreCommitsOlderThanDays=Integer.parseInt(property);
+
         property = properties.getProperty("exclusions.path.contains");
         if (nonNull(property)) this.exclusionsPathContains = property.split(",");
         property = properties.getProperty("exclusions.comments.prefix");
@@ -108,7 +119,7 @@ public class Reporter {
             reportLineItem.setPath(path);
             commitInfos = fileCommmits.get(path);
             commitCount = commitInfos.size();
-            if (commitCount < MIN_COMMIT_COUNT_TO_BE_REPORTED) continue;
+            if (commitCount < minCommitCountToBeReported) continue;
             reportLineItem.setCommitCount(commitCount);
             reportLineItem.setCommitsAge(calculateCommitsAge(commitInfos));
             reportLineItem.calculateAvgCommitAge();
@@ -261,7 +272,7 @@ public class Reporter {
             if (nonNull(sourcePath)) {
                 logCommand.addPath(sourcePath);
             }
-            logCommand.setMaxCount(MAX_COMMITS_COUNT);
+            logCommand.setMaxCount(maxCommitsCount);
             revCommits = logCommand.call();
         } catch (GitAPIException e) {
             throw new RuntimeException(e);
@@ -295,7 +306,7 @@ public class Reporter {
                 commitInfo.setComment(comment);
                 commitInfo.setTime(revCommit.getCommitterIdent().getWhen());
 
-                if (commitInfo.getAgeInDays() > IGNORE_COMMITS_OLDER_THAN_DAYS) continue;
+                if (commitInfo.getAgeInDays() > ignoreCommitsOlderThanDays) continue;
                 System.out.println(counter + "|" + commitInfo + "|" + newPath + "|" + diff.getChangeType());
 
                 commitInfos.add(commitInfo);
