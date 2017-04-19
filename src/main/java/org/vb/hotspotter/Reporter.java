@@ -45,6 +45,7 @@ public class Reporter {
     private static final String LINE_SEPARATOR = System.lineSeparator();
     private static final String COL_SEPARATOR = "|";
     private String dateFormat = "yyyy-MM-dd";
+    private Map<String, Integer> mapFileLineCounts = Maps.newHashMap();
 
     public Reporter(String propertiesFile) {
         init(loadProperties(propertiesFile));
@@ -79,7 +80,7 @@ public class Reporter {
     }
 
     public static void main(String[] args) throws IOException, GitAPIException {
-        Reporter reporter = new Reporter("/LG.properties");
+        Reporter reporter = new Reporter("/" + args[0] + ".properties");
         reporter.process();
     }
 
@@ -114,7 +115,7 @@ public class Reporter {
     }
 
     private void writeRawData(Map<String, List<CommitInfo>> fileCommits) {
-        final File file = new File("raw-data-" + reportFileName);
+        final File file = new File("raw-data.csv");
         final FileWriter fileWriter;
         try {
             if (file.exists()) {
@@ -122,7 +123,7 @@ public class Reporter {
             }
 
             fileWriter = new FileWriter(file);
-            fileWriter.append("path")
+            fileWriter.append("file")
                     .append(COL_SEPARATOR)
                     .append("commitId")
                     .append(COL_SEPARATOR)
@@ -133,19 +134,32 @@ public class Reporter {
                     .append("time")
                     .append(COL_SEPARATOR)
                     .append("ageInDays")
+                    .append(COL_SEPARATOR)
+                    .append("loc")
+                    .append(COL_SEPARATOR)
+                    .append("path")
                     .append(LINE_SEPARATOR);
+
             String commitDate = null;
+
             for (String path : fileCommits.keySet()) {
                 final List<CommitInfo> commitInfos = fileCommits.get(path);
 
                 for (CommitInfo commitInfo : commitInfos) {
                     commitDate = new SimpleDateFormat(dateFormat).format(commitInfo.getTime());
-                    fileWriter.append(path + COL_SEPARATOR + commitInfo.getId() + COL_SEPARATOR + commitInfo.getAuthorEmail() + COL_SEPARATOR + commitInfo.getComment() + COL_SEPARATOR + commitDate + COL_SEPARATOR + commitInfo.getAgeInDays() + LINE_SEPARATOR);
+                    fileWriter.append(getFileName(path) + COL_SEPARATOR + commitInfo.getId() + COL_SEPARATOR + commitInfo.getAuthorEmail() + COL_SEPARATOR + commitInfo.getComment() + COL_SEPARATOR + commitDate + COL_SEPARATOR + commitInfo.getAgeInDays()
+                            + COL_SEPARATOR
+                            + (mapFileLineCounts.containsKey(path) ? mapFileLineCounts.get(path) : "")
+                            + COL_SEPARATOR + path + LINE_SEPARATOR);
                 }
             }
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    protected String getFileName(String filePath) {
+        return filePath.substring(filePath.lastIndexOf('/') + 1);
     }
 
     private List<ReportLineItem> getReportData(final Map<String, List<CommitInfo>> fileCommmits) {
@@ -184,8 +198,11 @@ public class Reporter {
     }
 
     private void processCountOfLines(List<ReportLineItem> lines) {
+        int countOfLines;
         for (ReportLineItem lineItem : lines) {
-            lineItem.setLinesCount(findCountOfLines(lineItem.getPath()));
+            countOfLines = findCountOfLines(lineItem.getPath());
+            mapFileLineCounts.put(lineItem.getPath(), countOfLines);
+            lineItem.setLinesCount(countOfLines);
         }
     }
 
