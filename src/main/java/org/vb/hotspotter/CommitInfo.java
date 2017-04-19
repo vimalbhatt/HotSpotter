@@ -24,7 +24,7 @@ public class CommitInfo {
     }
 
     public void setAuthorEmail(String authorEmail) {
-        this.authorEmail = authorEmail;
+        this.authorEmail = authorEmail.toLowerCase();
     }
 
     public Date getTime() {
