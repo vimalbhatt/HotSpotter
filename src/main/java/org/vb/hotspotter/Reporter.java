@@ -20,9 +20,9 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.LineNumberReader;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -42,6 +42,9 @@ public class Reporter {
     private String[] exclusionsPathContains;
     private String[] exclusionsCommentsStartsWith;
     private String[] exclusionsFileExtensions;
+    private static final String LINE_SEPARATOR = System.lineSeparator();
+    private static final String COL_SEPARATOR = "|";
+    private String dateFormat = "yyyy-MM-dd";
 
     public Reporter(String propertiesFile) {
         init(loadProperties(propertiesFile));
@@ -55,17 +58,17 @@ public class Reporter {
         this.repositoryPath = properties.getProperty("repository.path");
         this.sourcePath = properties.getProperty("source.path");
         this.reportFileName = properties.getProperty("report.file");
-        
+        this.dateFormat = properties.getProperty("date.format");
         String property = null;
-        
+
         property = properties.getProperty("min.commit.count.to.report");
-        if (nonNull(property))this.minCommitCountToBeReported=Integer.parseInt(property);
-        
+        if (nonNull(property)) this.minCommitCountToBeReported = Integer.parseInt(property);
+
         property = properties.getProperty("max.commit.count.for.analysis");
-        if (nonNull(property))this.maxCommitsCount=Integer.parseInt(property);
+        if (nonNull(property)) this.maxCommitsCount = Integer.parseInt(property);
 
         property = properties.getProperty("ignore.commit.older.than.days");
-        if (nonNull(property))this.ignoreCommitsOlderThanDays=Integer.parseInt(property);
+        if (nonNull(property)) this.ignoreCommitsOlderThanDays = Integer.parseInt(property);
 
         property = properties.getProperty("exclusions.path.contains");
         if (nonNull(property)) this.exclusionsPathContains = property.split(",");
@@ -76,7 +79,7 @@ public class Reporter {
     }
 
     public static void main(String[] args) throws IOException, GitAPIException {
-        Reporter reporter = new Reporter("/HM.properties");
+        Reporter reporter = new Reporter("/LG.properties");
         reporter.process();
     }
 
@@ -107,6 +110,42 @@ public class Reporter {
         final List<ReportLineItem> lines = getReportData(fileCommits);
         normalize(lines);
         writeReport(sort(lines));
+        writeRawData(fileCommits);
+    }
+
+    private void writeRawData(Map<String, List<CommitInfo>> fileCommits) {
+        final File file = new File("raw-data-" + reportFileName);
+        final FileWriter fileWriter;
+        try {
+            if (file.exists()) {
+                file.delete();
+            }
+
+            fileWriter = new FileWriter(file);
+            fileWriter.append("path")
+                    .append(COL_SEPARATOR)
+                    .append("commitId")
+                    .append(COL_SEPARATOR)
+                    .append("author")
+                    .append(COL_SEPARATOR)
+                    .append("comment")
+                    .append(COL_SEPARATOR)
+                    .append("time")
+                    .append(COL_SEPARATOR)
+                    .append("ageInDays")
+                    .append(LINE_SEPARATOR);
+            String commitDate = null;
+            for (String path : fileCommits.keySet()) {
+                final List<CommitInfo> commitInfos = fileCommits.get(path);
+
+                for (CommitInfo commitInfo : commitInfos) {
+                    commitDate = new SimpleDateFormat(dateFormat).format(commitInfo.getTime());
+                    fileWriter.append(path + COL_SEPARATOR + commitInfo.getId() + COL_SEPARATOR + commitInfo.getAuthorEmail() + COL_SEPARATOR + commitInfo.getComment() + COL_SEPARATOR + commitDate + COL_SEPARATOR + commitInfo.getAgeInDays() + LINE_SEPARATOR);
+                }
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private List<ReportLineItem> getReportData(final Map<String, List<CommitInfo>> fileCommmits) {
@@ -147,7 +186,6 @@ public class Reporter {
     private void processCountOfLines(List<ReportLineItem> lines) {
         for (ReportLineItem lineItem : lines) {
             lineItem.setLinesCount(findCountOfLines(lineItem.getPath()));
-            System.out.println(lineItem.getPath() + ":" + lineItem.getLinesCount());
         }
     }
 
@@ -189,15 +227,13 @@ public class Reporter {
     }
 
     private List<ReportLineItem> sort(List<ReportLineItem> lines) {
-        Collections.sort(lines, new Comparator<ReportLineItem>() {
-            public int compare(ReportLineItem o1, ReportLineItem o2) {
-                if (o1.getCommitCount() > o2.getCommitCount()) {
-                    return -1;
-                } else if (o1.getCommitCount() < o2.getCommitCount()) {
-                    return 1;
-                } else {
-                    return 0;
-                }
+        Collections.sort(lines, (o1, o2) -> {
+            if (o1.getCommitCount() > o2.getCommitCount()) {
+                return -1;
+            } else if (o1.getCommitCount() < o2.getCommitCount()) {
+                return 1;
+            } else {
+                return 0;
             }
         });
         return lines;
@@ -214,7 +250,6 @@ public class Reporter {
     private void writeReport(List<ReportLineItem> lines) {
         final File file = new File(reportFileName);
         final FileWriter fileWriter;
-        final String lineSeparator = System.lineSeparator();
         try {
             if (file.exists()) {
                 file.delete();
@@ -223,24 +258,24 @@ public class Reporter {
             Set<String> authors = getAuthors(lines);
             fileWriter.append("path,commitCount,recency,normalisedAvgCommitAge,avgCommitAge,commitsAge,loc,Nloc,NcomitCount,NcommitAge,fullPath,")
                     .append(getAuthorsLine(authors))
-                    .append(lineSeparator);
+                    .append(LINE_SEPARATOR);
             for (ReportLineItem line : lines) {
-                fileWriter.append(line.getAbbrvPath() + "," + line.getCommitCount() + "," + line.getRecency() + "," + line.getNormalisedAvgCommitAge() + "," + line.getAvgCommitAge() + "," + line.getCommitsAge()
-                        + "," + line.getLinesCount()
-                        + "," + line.getNormalisedLinesCount()
-                        + "," + line.getNormalisedCommitCount()
-                        + "," + line.getNormalisedCommitsAge()
-                        + "," + line.getPath()
-                        + "," + line.getAuthorCommitsLine(authors)
-                        + "," + line.getAuthorsLine()
-                        + lineSeparator);
+                fileWriter.append(line.getAbbrvPath() + COL_SEPARATOR + line.getCommitCount() + COL_SEPARATOR + line.getRecency() + COL_SEPARATOR + line.getNormalisedAvgCommitAge() + COL_SEPARATOR + line.getAvgCommitAge() + COL_SEPARATOR + line.getCommitsAge()
+                        + COL_SEPARATOR + line.getLinesCount()
+                        + COL_SEPARATOR + line.getNormalisedLinesCount()
+                        + COL_SEPARATOR + line.getNormalisedCommitCount()
+                        + COL_SEPARATOR + line.getNormalisedCommitsAge()
+                        + COL_SEPARATOR + line.getPath()
+                        + COL_SEPARATOR + line.getAuthorCommitsLine(authors)
+                        + COL_SEPARATOR + line.getAuthorsLine()
+                        + LINE_SEPARATOR);
             }
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
     }
 
-    private Set<String> getAuthors(final List<ReportLineItem> lines){
+    private Set<String> getAuthors(final List<ReportLineItem> lines) {
         final Set<String> authors = Sets.newTreeSet();
         for (ReportLineItem line : lines) {
             for (String author : line.getAuthors().keySet()) {
@@ -249,10 +284,11 @@ public class Reporter {
         }
         return authors;
     }
+
     private String getAuthorsLine(final Set<String> authors) {
         StringBuilder authorsText = new StringBuilder();
         for (String author : authors) {
-            authorsText.append(author).append(",");
+            authorsText.append(author).append(COL_SEPARATOR);
         }
         return authorsText.toString();
     }
