@@ -2,7 +2,6 @@ package org.vb.hotspotter;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.LogCommand;
 import org.eclipse.jgit.api.errors.GitAPIException;
@@ -15,68 +14,31 @@ import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.util.io.DisabledOutputStream;
 
 import java.io.File;
-import java.io.FileReader;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.LineNumberReader;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
-import java.util.Set;
 import java.util.TreeMap;
 
 import static java.util.Objects.nonNull;
 
 public class Reporter {
-    public int maxCommitsCount = 20000;
-    private String repositoryPath;
-    private String sourcePath;
-    private String reportFileName;
-    private int minCommitCountToBeReported = 2;
-    private int ignoreCommitsOlderThanDays = 730;
-    private String[] exclusionsPathContains;
-    private String[] exclusionsCommentsStartsWith;
-    private String[] exclusionsFileExtensions;
-    private static final String LINE_SEPARATOR = System.lineSeparator();
-    private static final String COL_SEPARATOR = "|";
-    private String dateFormat = "yyyy-MM-dd";
+    
+    private Configuration configuration = Configuration.getInstance();
     private Map<String, Integer> mapFileLineCounts = Maps.newHashMap();
+    private ReportWriter reportWriter = null;
 
     public Reporter(String propertiesFile) {
-        init(loadProperties(propertiesFile));
+        configuration.init(loadProperties(propertiesFile));
+        reportWriter = new ReportWriter(configuration);
     }
 
     public Reporter(Properties properties) {
-        init(properties);
-    }
-
-    private void init(final Properties properties) {
-        this.repositoryPath = properties.getProperty("repository.path");
-        this.sourcePath = properties.getProperty("source.path");
-        this.reportFileName = properties.getProperty("report.file");
-        this.dateFormat = properties.getProperty("date.format");
-        String property = null;
-
-        property = properties.getProperty("min.commit.count.to.report");
-        if (nonNull(property)) this.minCommitCountToBeReported = Integer.parseInt(property);
-
-        property = properties.getProperty("max.commit.count.for.analysis");
-        if (nonNull(property)) this.maxCommitsCount = Integer.parseInt(property);
-
-        property = properties.getProperty("ignore.commit.older.than.days");
-        if (nonNull(property)) this.ignoreCommitsOlderThanDays = Integer.parseInt(property);
-
-        property = properties.getProperty("exclusions.path.contains");
-        if (nonNull(property)) this.exclusionsPathContains = property.split(",");
-        property = properties.getProperty("exclusions.comments.prefix");
-        if (nonNull(property)) this.exclusionsCommentsStartsWith = property.split(",");
-        property = properties.getProperty("exclusions.file.extensions");
-        if (nonNull(property)) this.exclusionsFileExtensions = property.split(",");
+        configuration.init(properties);
     }
 
     public static void main(String[] args) throws IOException, GitAPIException {
@@ -110,57 +72,10 @@ public class Reporter {
         final Map<String, List<CommitInfo>> fileCommits = findFileCommits();
         final List<ReportLineItem> lines = getReportData(fileCommits);
         normalize(lines);
-        writeReport(sort(lines));
-        writeRawData(fileCommits);
+        reportWriter.writeReport(sort(lines));
+        reportWriter.writeRawData(fileCommits, mapFileLineCounts);
     }
 
-    private void writeRawData(Map<String, List<CommitInfo>> fileCommits) {
-        final File file = new File("raw-data.csv");
-        final FileWriter fileWriter;
-        try {
-            if (file.exists()) {
-                file.delete();
-            }
-
-            fileWriter = new FileWriter(file);
-            fileWriter.append("file")
-                    .append(COL_SEPARATOR)
-                    .append("commitId")
-                    .append(COL_SEPARATOR)
-                    .append("author")
-                    .append(COL_SEPARATOR)
-                    .append("comment")
-                    .append(COL_SEPARATOR)
-                    .append("time")
-                    .append(COL_SEPARATOR)
-                    .append("ageInDays")
-                    .append(COL_SEPARATOR)
-                    .append("loc")
-                    .append(COL_SEPARATOR)
-                    .append("path")
-                    .append(LINE_SEPARATOR);
-
-            String commitDate = null;
-
-            for (String path : fileCommits.keySet()) {
-                final List<CommitInfo> commitInfos = fileCommits.get(path);
-
-                for (CommitInfo commitInfo : commitInfos) {
-                    commitDate = new SimpleDateFormat(dateFormat).format(commitInfo.getTime());
-                    fileWriter.append(getFileName(path) + COL_SEPARATOR + commitInfo.getId() + COL_SEPARATOR + commitInfo.getAuthorEmail() + COL_SEPARATOR + commitInfo.getComment() + COL_SEPARATOR + commitDate + COL_SEPARATOR + commitInfo.getAgeInDays()
-                            + COL_SEPARATOR
-                            + (mapFileLineCounts.containsKey(path) ? mapFileLineCounts.get(path) : "")
-                            + COL_SEPARATOR + path + LINE_SEPARATOR);
-                }
-            }
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    protected String getFileName(String filePath) {
-        return filePath.substring(filePath.lastIndexOf('/') + 1);
-    }
 
     private List<ReportLineItem> getReportData(final Map<String, List<CommitInfo>> fileCommmits) {
         final List<ReportLineItem> lines = Lists.newArrayList();
@@ -172,7 +87,7 @@ public class Reporter {
             reportLineItem.setPath(path);
             commitInfos = fileCommmits.get(path);
             commitCount = commitInfos.size();
-            if (commitCount < minCommitCountToBeReported) continue;
+            if (commitCount < configuration.getMinCommitCountToBeReported()) continue;
             reportLineItem.setCommitCount(commitCount);
             reportLineItem.setCommitsAge(calculateCommitsAge(commitInfos));
             reportLineItem.calculateAvgCommitAge();
@@ -200,26 +115,12 @@ public class Reporter {
     private void processCountOfLines(List<ReportLineItem> lines) {
         int countOfLines;
         for (ReportLineItem lineItem : lines) {
-            countOfLines = findCountOfLines(lineItem.getPath());
+            countOfLines = Utils.findCountOfLines(configuration.getRepositoryPath() + "/" + lineItem.getPath());
             mapFileLineCounts.put(lineItem.getPath(), countOfLines);
             lineItem.setLinesCount(countOfLines);
         }
     }
 
-    protected int findCountOfLines(String path) {
-        final String filePath = repositoryPath + "/" + path;
-        File file = new File(filePath);
-        if (!file.exists()) return -1;
-
-        try (LineNumberReader lineNumberReader = new LineNumberReader(new FileReader(filePath))) {
-            while (lineNumberReader.readLine() != null) {
-            }
-            ;
-            return lineNumberReader.getLineNumber();
-        } catch (IOException e) {
-        }
-        return 0;
-    }
 
     private void normalize(List<ReportLineItem> lines) {
         double maxCommitCount = 0;
@@ -264,51 +165,6 @@ public class Reporter {
         return commitsAge;
     }
 
-    private void writeReport(List<ReportLineItem> lines) {
-        final File file = new File(reportFileName);
-        final FileWriter fileWriter;
-        try {
-            if (file.exists()) {
-                file.delete();
-            }
-            fileWriter = new FileWriter(file);
-            Set<String> authors = getAuthors(lines);
-            fileWriter.append("path,commitCount,recency,normalisedAvgCommitAge,avgCommitAge,commitsAge,loc,Nloc,NcomitCount,NcommitAge,fullPath,")
-                    .append(getAuthorsLine(authors))
-                    .append(LINE_SEPARATOR);
-            for (ReportLineItem line : lines) {
-                fileWriter.append(line.getAbbrvPath() + COL_SEPARATOR + line.getCommitCount() + COL_SEPARATOR + line.getRecency() + COL_SEPARATOR + line.getNormalisedAvgCommitAge() + COL_SEPARATOR + line.getAvgCommitAge() + COL_SEPARATOR + line.getCommitsAge()
-                        + COL_SEPARATOR + line.getLinesCount()
-                        + COL_SEPARATOR + line.getNormalisedLinesCount()
-                        + COL_SEPARATOR + line.getNormalisedCommitCount()
-                        + COL_SEPARATOR + line.getNormalisedCommitsAge()
-                        + COL_SEPARATOR + line.getPath()
-                        + COL_SEPARATOR + line.getAuthorCommitsLine(authors)
-                        + COL_SEPARATOR + line.getAuthorsLine()
-                        + LINE_SEPARATOR);
-            }
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    private Set<String> getAuthors(final List<ReportLineItem> lines) {
-        final Set<String> authors = Sets.newTreeSet();
-        for (ReportLineItem line : lines) {
-            for (String author : line.getAuthors().keySet()) {
-                authors.add(author);
-            }
-        }
-        return authors;
-    }
-
-    private String getAuthorsLine(final Set<String> authors) {
-        StringBuilder authorsText = new StringBuilder();
-        for (String author : authors) {
-            authorsText.append(author).append(COL_SEPARATOR);
-        }
-        return authorsText.toString();
-    }
 
     private Map<String, List<CommitInfo>> findFileCommits() {
         final Repository repository = getRepository();
@@ -322,10 +178,10 @@ public class Reporter {
         final Iterable<RevCommit> revCommits;
         try {
             final LogCommand logCommand = git.log();
-            if (nonNull(sourcePath)) {
-                logCommand.addPath(sourcePath);
+            if (nonNull(configuration.getSourcePath())) {
+                logCommand.addPath(configuration.getSourcePath());
             }
-            logCommand.setMaxCount(maxCommitsCount);
+            logCommand.setMaxCount(configuration.getMaxCommitsCount());
             revCommits = logCommand.call();
         } catch (GitAPIException e) {
             throw new RuntimeException(e);
@@ -359,7 +215,7 @@ public class Reporter {
                 commitInfo.setComment(comment);
                 commitInfo.setTime(revCommit.getCommitterIdent().getWhen());
 
-                if (commitInfo.getAgeInDays() > ignoreCommitsOlderThanDays) continue;
+                if (commitInfo.getAgeInDays() > configuration.getIgnoreCommitsOlderThanDays()) continue;
                 System.out.println(counter + "|" + commitInfo + "|" + newPath + "|" + diff.getChangeType());
 
                 commitInfos.add(commitInfo);
@@ -370,22 +226,22 @@ public class Reporter {
     }
 
     private boolean shouldExcludeFile(String path) {
-        for (String exclusion : exclusionsPathContains) {
+        for (String exclusion : configuration.getExclusionsPathContains()) {
             if (path.contains(exclusion)) return true;
         }
-        for (String exclusion : exclusionsCommentsStartsWith) {
+        for (String exclusion : configuration.getExclusionsCommentsStartsWith()) {
             if (path.startsWith(exclusion)) return true;
         }
-        for (String exclusion : exclusionsFileExtensions) {
+        for (String exclusion : configuration.getExclusionsFileExtensions()) {
             if (path.endsWith(exclusion)) return true;
         }
-        if (!path.contains(sourcePath)) return true;
+        if (!path.contains(configuration.getSourcePath())) return true;
         //if(!path.contains("HedgingServiceImpl.java")) return true;
         return false;
     }
 
     private boolean shouldExcludeCommitsWithComments(String comment) {
-        for (String exclusion : exclusionsCommentsStartsWith) {
+        for (String exclusion : configuration.getExclusionsCommentsStartsWith()) {
             if (comment.startsWith(exclusion)) return true;
         }
         return false;
@@ -401,7 +257,7 @@ public class Reporter {
 
     private Repository getRepository() {
         try {
-            return new FileRepositoryBuilder().setGitDir(new File(repositoryPath + "/.git")).setMustExist(true).build();
+            return new FileRepositoryBuilder().setGitDir(new File(configuration.getRepositoryPath() + "/.git")).setMustExist(true).build();
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
